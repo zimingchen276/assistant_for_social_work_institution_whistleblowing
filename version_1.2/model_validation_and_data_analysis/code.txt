@@ -1,0 +1,309 @@
+#读入数据
+import pandas as pd
+import numpy as np
+data = pd.read_excel(r"326312325_按序号_决策与价值判断调查_150_106.xlsx")
+
+# 筛选注意力题回答异常的样本并且只保留分析需要的列
+data = data[data["10、G．	这题请选1"] == 1]
+data = data[data["2、您的年龄段："] != 10]
+
+#每种行为对应的问题被解决的概率
+s_1 = data["7、假设你做出了以下选择，你认为问题被解决的概率有多大，请填写0-100之间的数值—直接举报"] / 100
+s_2 = data["7、匿名举报"] / 100
+s_3 = data["7、继续保持观察，等待时机或者搜集更多证据后再采取行动"] / 100
+s_4 = data["7、保持沉默，等待第三方想办法解决问题"] / 100
+#每种行为对应的主观上对承受难以承受的代价的概率评估
+c_1 = data["8、假设你做出了以下选择，你认为你有多大概率会承受难以承受的损失，请填写0-100之间的数值—直接举报"] / 100
+c_2 = data["8、匿名举报"] / 100
+c_3 = data["8、继续保持观察，等待时机或者搜集更多证据后再采取行动"] / 100
+c_4 = data["8、保持沉默，等待第三方想办法解决问题"] / 100
+
+df_s_c = pd.DataFrame({"s_1": s_1, "s_2": s_2, "s_3": s_3, "s_4": s_4, "c_1": c_1, "c_2": c_2, "c_3": c_3, "c_4": c_4})
+
+# df_s_c = normalize(df_s_c, ['s_1', 's_2', 's_3', 's_4', 'c_1', 'c_2', 'c_3', 'c_4'])
+
+#每一种行为和每一种后果的组合概率
+# def cooperation_probability(s, c, i):
+#     p = {}
+#     p[f"{i}_1"] = s * c
+#     p[f"{i}_2"] = s * (1 - c)
+#     p[f"{i}_3"] = (1 - s) * c
+#     p[f"{i}_4"] = (1 - s) * (1 - c)
+#     print(f"p_{i} 的组合概率计算完成: {p}")
+#     p = pd.DataFrame(p)
+#     p.to_csv(f"p_{i}.csv", index=False)
+#     return p[f"{i}_1"],p[f"{i}_2"],p[f"{i}_3"],p[f"{i}_4"]
+
+# cooperation_probability(df_s_c['s_1'], df_s_c['c_1'], 1)
+# cooperation_probability(df_s_c['s_2'], df_s_c['c_2'], 2)
+# cooperation_probability(df_s_c['s_3'], df_s_c['c_3'], 3)
+# cooperation_probability(df_s_c['s_4'], df_s_c['c_4'], 4)
+
+def add_prob_columns(df_s_c, s_col, c_col, i):
+    s = df_s_c[s_col]
+    c = df_s_c[c_col]
+    df_s_c[f'p{i}_1'] = s * c                  # 成功 & 代价
+    df_s_c[f'p{i}_2'] = s * (1 - c)            # 成功 & 无代价
+    df_s_c[f'p{i}_3'] = (1 - s) * c            # 失败 & 代价
+    df_s_c[f'p{i}_4'] = (1 - s) * (1 - c)      # 失败 & 无代价
+
+add_prob_columns(df_s_c, 's_1', 'c_1', 1)
+add_prob_columns(df_s_c, 's_2', 'c_2', 2)
+add_prob_columns(df_s_c, 's_3', 'c_3', 3)
+add_prob_columns(df_s_c, 's_4', 'c_4', 4)
+print(df_s_c)
+
+# #主观风险敏感度α
+# alpha = data["3、你能在多大水平上承担选择可能带来的风险？"] / 5
+# #风险敏感的影响λ1
+# lambda1 = data["4、你在做决策时，对风险的考虑在多大程度上影响你的决定？"]  / 5
+# #对收益波动性的看法的影响λ2
+# lambda2 = data["5、你在做决策时，多大程度上在意收益是否稳定？"]  / 5
+
+# df_alpha_lambda = pd.DataFrame({"alpha": alpha, "lambda1": lambda1, "lambda2": lambda2})
+
+# # df_alpha_lambda = normalize(df_alpha_lambda, ['alpha', 'lambda1', 'lambda2'])
+alpha_raw   = data["3、你能在多大水平上承担选择可能带来的风险？"]
+lambda1_raw = data["4、你在做决策时，对风险的考虑在多大程度上影响你的决定？"]
+# lambda2_raw = data["5、你在做决策时，多大程度上在意收益是否稳定？"]
+
+alpha   = (alpha_raw + 1) / 6
+lambda1 = (lambda1_raw + 1) / 6
+# lambda2 = (lambda2_raw) / 5.0
+
+# df_alpha_lambda = pd.DataFrame({"alpha": alpha, "lambda1": lambda1, "lambda2": lambda2})
+
+df_alpha_lambda = pd.DataFrame({"alpha": alpha, "lambda1": lambda1})
+
+# df_alpha_lambd = normalize(df_alpha_lambda, ['alpha', 'lambda1'])
+
+#用分数阶熵结算行为带来的总体不确定性
+import numpy as np
+import pandas as pd
+
+def fractional_entropy(df_probs, alpha):
+    eps = 1e-12
+    def H_for(cols):
+        P = df_probs[cols].clip(lower=eps, upper=1.0)
+        return (P * (-np.log(P)) ** alpha.values[:, None]).sum(axis=1)
+
+    H = pd.DataFrame({
+        'H_alpha_1': H_for(['p1_1','p1_2','p1_3','p1_4']),
+        'H_alpha_2': H_for(['p2_1','p2_2','p2_3','p2_4']),
+        'H_alpha_3': H_for(['p3_1','p3_2','p3_3','p3_4']),
+        'H_alpha_4': H_for(['p4_1','p4_2','p4_3','p4_4']),
+    }, index=df_probs.index)
+    return H
+
+H_alpha_df = fractional_entropy(df_s_c, df_alpha_lambda['alpha'])
+print(H_alpha_df.head())
+
+#综合权衡指数计算
+#公平价值F_v
+F_1 = data["9、在你选择的案例中，你对以下说法有多认可，1代表完全不同意，6代表完全同意—A．	相关人的行为损害了社会公正"]
+F_2 = data["9、B．	有些人没有得到他们应得的"]
+F_3 = data["9、C．	不公正战胜了公正"]
+F_4 = data["9、D．	遭受了不公正的人没有得到补偿"]
+# F_5 = data["9、E．	案例中的不公正是偶然的，而不是必然"] #已经在问卷验证过程就被删除
+F_6 = data["9、F．	相关人员做决定时没有力求公正"]
+
+F_v = F_1 + F_2 + F_3 + F_4 + F_6
+
+#忠诚成本Lc
+L_1 = data["10、在你选择的案例中，你对以下说法有多认可，1代表完全不同意，6代表完全同意—A．	举报同事或朋友是一种对关系的背叛"]
+L_2 = data["10、B．	即使举报是正确的，也会削弱我对团队的忠诚感"]
+L_3 = data["10、C．	举报行为会被视为对团队利益的损害"]
+L_4 = data["10、D．	考虑到我和朋友、同事的关系，我会犹豫是否继续举报"]
+L_5 = data["10、E．	即使有不当行为，我仍会优先维护与团队的关系"]
+L_6 = data["10、F．	举报会让我感觉自己不再完全属于这个群体"]
+
+L_c = L_1 + L_2 + L_3 + L_4 + L_5 + L_6
+
+#每一种行为对应的感知收益
+P_1_1 = data["11、假设你即将要采取直接举报的行动，那么你对下面的说法认可程度多高，1代表完全不同意，6代表完全同意—A.	这会提高我在组织中的声望"]
+P_1_2 = data["11、B.	这会给我带来职业晋升机会"]
+P_1_3 = data["11、C.	这会使我获得满意的经济等物质奖励"]
+P_1_4 = data["11、D.	这会让我觉得我在做正确的事情"]
+P_1_5 = data["11、E.	这会使我获得心理上的满足或者释怀"]
+
+P_1p = P_1_1 + P_1_2 + P_1_3 + P_1_4 + P_1_5
+
+P_2_1 = data["12、假设你即将要采取匿名举报的行动，那么你对下面的说法认可程度多高，1代表完全不同意，6代表完全同意—A.	这会提高我在组织中的声望"]
+P_2_2 = data["12、B.	这会给我带来职业晋升机会"]
+P_2_3 = data["12、C.	这会使我获得满意的经济等物质奖励"]
+P_2_4 = data["12、D.	这会让我觉得我在做正确的事情"]
+P_2_5 = data["12、E.	这会使我获得心理上的满足或者释怀"]
+
+P_2p = P_2_1 + P_2_2 + P_2_3 + P_2_4 + P_2_5
+
+P_3_1 = data["13、假设你即将要采取继续保持观察，等待时机或者搜集更多证据后再采取行动的行动，那么你对下面的说法认可程度多高，1代表完全不同意，6代表完全同意—A.	这会提高我在组织中的声望"]
+P_3_2 = data["13、B.	这会给我带来职业晋升机会"]
+P_3_3 = data["13、C.	这会使我获得满意的经济等物质奖励"]
+P_3_4 = data["13、D.	这会让我觉得我在做正确的事情"]
+P_3_5 = data["13、E.	这会使我获得心理上的满足或者释怀"]
+
+P_3p = P_3_1 + P_3_2 + P_3_3 + P_3_4 + P_3_5
+
+P_4_1 = data["14、假设你即将要采取保持沉默，等待第三方想办法解决问题的行动，那么你对下面的说法认可程度多高，1代表完全不同意，6代表完全同意—A.	这会提高我在组织中的声望"]
+P_4_2 = data["14、B.	这会给我带来职业晋升机会"]
+P_4_3 = data["14、C.	这会使我获得满意的经济等物质奖励"]
+P_4_4 = data["14、D.	这会让我觉得我在做正确的事情"]
+P_4_5 = data["14、E.	这会使我获得心理上的满足或者释怀"]
+
+P_4p = P_4_1 + P_4_2 + P_4_3 + P_4_4 + P_4_5
+
+# ci_cal = pd.DataFrame({"F_v": F_v, "L_c": L_c, "P_1p": P_1p, "P_2p": P_2p, "P_3p": P_3p, "P_4p": P_4p})
+
+# ci_cal = normalize(ci_cal,["F_v","L_c","P_1p","P_2p","P_3p","P_4p"])
+
+#每一种行为的效用ci
+# C1 = F_v - L_c + P_1p
+# C2 = F_v - L_c + P_2p
+# C3 = F_v - L_c + P_3p
+# C4 = F_v - L_c + P_4p
+
+C1 = (F_v * P_1p) / L_c
+C2 = (F_v * P_2p) / L_c
+C3 = (F_v * P_3p) / L_c
+C4 = (F_v * P_4p) / L_c
+
+df_ci = pd.DataFrame({"C1": C1, "C2": C2, "C3": C3, "C4": C4})
+
+# df_ci = normalize(df_ci,["C1","C2","C3","C4"])
+
+# eps = 1e-12
+# df_ci = df_ci.replace(0, eps)
+
+#为计算效用函数做准备
+data2 = pd.concat([data, df_alpha_lambda, df_ci], axis=1)
+print(data2)
+
+#计算效用函数
+import numpy as np
+
+for i, col in enumerate(['C1', 'C2', 'C3', 'C4'], start=1):
+    U_col = f"U{i}"
+    data2[U_col] = np.where(
+        data2['alpha'] == 0.5, data2[col],
+        np.where(
+            data2['alpha'] < 0.5, np.log(data2[col]),
+            np.sqrt(data2[col])
+        )
+    )
+#     data2[U_col] = np.where(
+#         data2['alpha'] == 0.5, data2[col],
+#         np.where(
+#             data2['alpha'] < 0.5, np.log(data2[col]),
+#             np.sqrt(data2[col])
+#         )
+#     )
+
+print(data2)
+
+data3 = pd.concat([data2, H_alpha_df], axis=1)
+print(data3)
+
+import numpy as np
+import pandas as pd
+
+# 设置最小值eps
+eps = 1e-12
+
+# 用一个字典保存所有的概率数据
+probability_dict = {
+    'p1': df_s_c[['p1_1', 'p1_2', 'p1_3', 'p1_4']],
+    'p2': df_s_c[['p2_1', 'p2_2', 'p2_3', 'p2_4']],
+    'p3': df_s_c[['p3_1', 'p3_2', 'p3_3', 'p3_4']],
+    'p4': df_s_c[['p4_1', 'p4_2', 'p4_3', 'p4_4']]
+}
+
+# 用一个字典保存所有效用数据
+utility_dict = {
+    'U1': data3["U1"],
+    'U2': data3["U2"],
+    'U3': data3["U3"],
+    'U4': data3["U4"]
+}
+
+# 用一个字典保存每个行为的效用变动
+delta_U = {}
+for i in range(1, 5):
+    delta_U[f'U{i}_1'] = -1.37
+    delta_U[f'U{i}_2'] = 3.13
+    delta_U[f'U{i}_3'] = 1.37
+    delta_U[f'U{i}_4'] = -3.13
+
+# 处理效用和熵的计算
+u_x_a = {}
+
+# 遍历每个行为
+for i in range(1, 5):
+    U = utility_dict[f'U{i}']
+    p = probability_dict[f'p{i}']
+    
+    # 计算效用变动
+    U_variants = [U + delta_U[f'U{i}_{j}'] for j in range(1, 5)]
+    
+    # 计算熵
+    H_variants = [(-np.log(p[f'p{i}_{j}'].clip(lower=eps))) ** df_alpha_lambda['alpha'] for j in range(1, 5)]
+    
+    # 组合效用与熵
+    u_x_a[i] = pd.DataFrame({
+        f'u_x_a_{i}_{j}': U_variants[j-1] * H_variants[j-1] for j in range(1, 5)
+    })
+
+# 合并到data3
+data3 = pd.concat([data3] + [u_x_a[i] for i in range(1, 5)], axis=1)
+
+# 打印结果
+print(u_x_a[1])
+print(u_x_a[2])
+
+#决策分数计算模块
+import numpy as np
+import pandas as pd
+
+#公式右边
+#先计算每个行为及其对应后果的期望效用
+data3['E_U_1'] = sum(u_x_a[1][f"u_x_a_1_{i}"] * df_s_c[f"p1_{i}"] for i in range(1, 5))
+data3['E_U_2'] = sum(u_x_a[2][f"u_x_a_2_{i}"] * df_s_c[f"p2_{i}"] for i in range(1, 5))
+data3['E_U_3'] = sum(u_x_a[3][f"u_x_a_3_{i}"] * df_s_c[f"p4_{i}"] for i in range(1, 5))
+data3['E_U_4'] = sum(u_x_a[4][f"u_x_a_4_{i}"] * df_s_c[f"p4_{i}"] for i in range(1, 5))
+
+# 最大期望值
+data3['max_EU'] = data3[['E_U_1', 'E_U_2', 'E_U_3', 'E_U_4']].max(axis=1)
+
+# 输出结果
+print(data3[['E_U_1', 'E_U_2', 'E_U_3', 'E_U_4', 'max_EU']])
+
+#公式左边
+#每个行为后果概率分布的方差
+df_s_c[['p1_1', 'p1_2', 'p1_3', 'p1_4']] = df_s_c[['p1_1', 'p1_2', 'p1_3', 'p1_4']].apply(pd.to_numeric, errors='coerce')
+df_s_c[['p2_1', 'p2_2', 'p2_3', 'p2_4']] = df_s_c[['p2_1', 'p2_2', 'p2_3', 'p2_4']].apply(pd.to_numeric, errors='coerce')
+df_s_c[['p3_1', 'p3_2', 'p3_3', 'p3_4']] = df_s_c[['p3_1', 'p3_2', 'p3_3', 'p3_4']].apply(pd.to_numeric, errors='coerce')
+df_s_c[['p4_1', 'p4_2', 'p4_3', 'p4_4']] = df_s_c[['p4_1', 'p4_2', 'p4_3', 'p4_4']].apply(pd.to_numeric, errors='coerce')
+
+data3['var_x_a_1'] = df_s_c[['p1_1', 'p1_2', 'p1_3', 'p1_4']].var(axis=1)
+data3['var_x_a_2'] = df_s_c[['p2_1', 'p2_2', 'p2_3', 'p2_4']].var(axis=1)
+data3['var_x_a_3'] = df_s_c[['p3_1', 'p3_2', 'p3_3', 'p3_4']].var(axis=1)
+data3['var_x_a_4'] = df_s_c[['p4_1', 'p4_2', 'p4_3', 'p4_4']].var(axis=1)
+
+#最大方差
+data3['max_EU_var'] = data3[['var_x_a_1', 'var_x_a_2', 'var_x_a_3', 'var_x_a_4']].max(axis=1)
+
+print(data3[['var_x_a_1', 'var_x_a_2', 'var_x_a_3', 'var_x_a_4', 'max_EU_var']])
+
+#把公式组装起来
+data3["R1"] = (data3['lambda1'] / 2) * (data3["H_alpha_1"] + (data3['var_x_a_1'] / data3['max_EU_var'])) - (1 - data3['lambda1']) * (data3['E_U_1'] / data3['max_EU'])
+data3["R2"] = (data3['lambda1'] / 2) * (data3["H_alpha_2"] + (data3['var_x_a_2'] / data3['max_EU_var'])) - (1 - data3['lambda1']) * (data3['E_U_2'] / data3['max_EU'])
+data3["R3"] = (data3['lambda1'] / 2) * (data3["H_alpha_3"] + (data3['var_x_a_3'] / data3['max_EU_var'])) - (1 - data3['lambda1']) * (data3['E_U_3'] / data3['max_EU'])
+data3["R4"] = (data3['lambda1'] / 2) * (data3["H_alpha_4"] + (data3['var_x_a_4'] / data3['max_EU_var'])) - (1 - data3['lambda1']) * (data3['E_U_4'] / data3['max_EU'])
+
+# 找到每行最小的值所在的列索引
+decision = data3[['R1', 'R2', 'R3', 'R4']].apply(lambda row: row.idxmin(), axis=1)
+
+# 将决策结果赋值为1、2、3、4
+data3['best_action'] = decision.map({'R1': 1, 'R2': 2, 'R3': 3, 'R4': 4})
+
+# 输出最终决策
+print(data3[['R1', 'R2', 'R3', 'R4', 'best_action']])
